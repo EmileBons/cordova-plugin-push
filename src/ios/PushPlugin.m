@@ -31,7 +31,6 @@
 
 @import Firebase;
 @import FirebaseCore;
-@import FirebaseInstanceID;
 @import FirebaseMessaging;
 
 @implementation PushPlugin : CDVPlugin
@@ -55,27 +54,24 @@
 
 -(void)initRegistration;
 {
-    [[FIRInstanceID instanceID] instanceIDWithHandler:^(FIRInstanceIDResult * _Nullable result, NSError * _Nullable error) {
-        if (error != nil) {
-            NSLog(@"Error fetching remote instance ID: %@", error);
-        } else {
-            NSLog(@"Remote instance ID (FCM Registration) Token: %@", result.token);
+    [[FIRMessaging messaging] tokenWithCompletion:^(NSString *token, NSError *error) {
+      if (error != nil) {
+          NSLog(@"Error getting FCM registration token: %@", error);
+      } else {
+          NSLog(@"FCM registration token: %@", token);
+          [self setFcmRegistrationToken: token];
+          
+          id topics = [self fcmTopics];
+          if (topics != nil) {
+              for (NSString *topic in topics) {
+                  NSLog(@"subscribe to topic: %@", topic);
+                  id pubSub = [FIRMessaging messaging];
+                  [pubSub subscribeToTopic:topic];
+              }
+          }
 
-            [self setFcmRegistrationToken: result.token];
-
-            NSString* message = [NSString stringWithFormat:@"Remote InstanceID token: %@", result.token];
-
-            id topics = [self fcmTopics];
-            if (topics != nil) {
-                for (NSString *topic in topics) {
-                    NSLog(@"subscribe to topic: %@", topic);
-                    id pubSub = [FIRMessaging messaging];
-                    [pubSub subscribeToTopic:topic];
-                }
-            }
-
-            [self registerWithToken:result.token];
-        }
+          [self registerWithToken:token];
+      }
     }];
 }
 
@@ -179,19 +175,7 @@
         NSLog(@"Push Plugin VoIP missing or false");
         [[NSNotificationCenter defaultCenter]
          addObserver:self selector:@selector(onTokenRefresh)
-         name:kFIRInstanceIDTokenRefreshNotification object:nil];
-
-        [[NSNotificationCenter defaultCenter]
-         addObserver:self selector:@selector(sendDataMessageFailure:)
-         name:FIRMessagingSendErrorNotification object:nil];
-
-        [[NSNotificationCenter defaultCenter]
-         addObserver:self selector:@selector(sendDataMessageSuccess:)
-         name:FIRMessagingSendSuccessNotification object:nil];
-
-        [[NSNotificationCenter defaultCenter]
-         addObserver:self selector:@selector(didDeleteMessagesOnServer)
-         name:FIRMessagingMessagesDeletedNotification object:nil];
+         name:FIRMessagingRegistrationTokenRefreshedNotification object:nil];
 
         [self.commandDelegate runInBackground:^ {
             NSLog(@"Push Plugin register called");
@@ -233,15 +217,15 @@
 
             if (clearBadgeArg == nil || ([clearBadgeArg isKindOfClass:[NSString class]] && [clearBadgeArg isEqualToString:@"false"]) || ![clearBadgeArg boolValue]) {
                 NSLog(@"PushPlugin.register: setting badge to false");
-                clearBadge = NO;
+                self.clearBadge = NO;
             } else {
                 NSLog(@"PushPlugin.register: setting badge to true");
-                clearBadge = YES;
+                self.clearBadge = YES;
                 [[UIApplication sharedApplication] setApplicationIconBadgeNumber:0];
             }
-            NSLog(@"PushPlugin.register: clear badge is set to %d", clearBadge);
+            NSLog(@"PushPlugin.register: clear badge is set to %d", self.clearBadge);
 
-            isInline = NO;
+            self.isInline = NO;
 
             NSLog(@"PushPlugin.register: better button setup");
             // setup action buttons
@@ -309,13 +293,13 @@
 
             // Load the file content and read the data into arrays
             NSDictionary *dict = [[NSDictionary alloc] initWithContentsOfFile:path];
-            fcmSenderId = [dict objectForKey:@"GCM_SENDER_ID"];
+            self.fcmSenderId = [dict objectForKey:@"GCM_SENDER_ID"];
             BOOL isGcmEnabled = [[dict valueForKey:@"IS_GCM_ENABLED"] boolValue];
 
-            NSLog(@"FCM Sender ID %@", fcmSenderId);
+            NSLog(@"FCM Sender ID %@", self.fcmSenderId);
 
             //  GCM options
-            [self setFcmSenderId: fcmSenderId];
+            [self setFcmSenderId: self.fcmSenderId];
             if(isGcmEnabled && [[self fcmSenderId] length] > 0) {
                 NSLog(@"Using FCM Notification");
                 [self setUsesFCM: YES];
@@ -339,7 +323,7 @@
                 [self setFcmSandbox:@YES];
             }
 
-            if (notificationMessage) {            // if there is a pending startup notification
+            if (self.notificationMessage) {            // if there is a pending startup notification
                 dispatch_async(dispatch_get_main_queue(), ^{
                     // delay to allow JS event handlers to be setup
                     [self performSelector:@selector(notificationReceived) withObject:nil afterDelay: 0.5];
